@@ -1,0 +1,100 @@
+# ============================================================================
+# Docker Compose pour Airbnb Scraper
+# ============================================================================
+
+services:
+  # ── Service principal: Scraper complet (manuel ou cron) ──────────────────
+  airbnb-scraper-full:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: airbnb_scraper_full
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Airbnb credentials
+      - AIRBNB_EMAIL=${AIRBNB_EMAIL}
+      - AIRBNB_PASSWORD=${AIRBNB_PASSWORD}
+      - TOTP_SECRET=${TOTP_SECRET}
+      
+      # API Next.js
+      - NEXTJS_API_URL=${NEXTJS_API_URL:-http://host.docker.internal:3000/api/airbnb/sync}
+      - NEXTJS_API_KEY=${NEXTJS_API_KEY}
+      
+      # Output
+      - OUTPUT_CSV=/app/output/reservations_airbnb.csv
+      - OUTPUT_JSON=/app/output/reservations_airbnb.json
+      
+      # Mode
+      - HEADLESS=true
+      # Proxy résidentiel (optionnel — évite les CAPTCHAs)
+      - PROXY_URL=${PROXY_URL:-}
+    volumes:
+      - airbnb-output:/app/output
+    networks:
+      - airbnb-network
+    restart: "no"  # Manuel
+    profiles:
+      - manual
+
+  # ── Service iCal Watcher: Surveillance légère (toutes les 5 min) ───────
+  airbnb-ical-watcher:
+    build:
+      context: ..
+      dockerfile: Dockerfile.watcher
+    container_name: airbnb_ical_watcher
+    command: python ical_watcher.py
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Supabase (lecture property_sync_config + écriture ical_hashes + sync_queue)
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Intervalle de polling (secondes)
+      - ICAL_POLL_INTERVAL=${ICAL_POLL_INTERVAL:-300}
+    networks:
+      - airbnb-network
+    restart: unless-stopped
+    profiles:
+      - ical
+
+  # ── Service Targeted: Scraping ciblé (sur demande via sync_queue) ─────
+  airbnb-scraper-targeted:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: airbnb_scraper_targeted
+    command: python targeted_scraper.py
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Airbnb credentials (pour login CloakBrowser)
+      - AIRBNB_EMAIL=${AIRBNB_EMAIL}
+      - AIRBNB_PASSWORD=${AIRBNB_PASSWORD}
+      - TOTP_SECRET=${TOTP_SECRET}
+      # API Next.js (envoi des réservations)
+      - NEXTJS_API_URL=${NEXTJS_API_URL:-http://host.docker.internal:3000/api/airbnb/sync}
+      - NEXTJS_API_KEY=${NEXTJS_API_KEY}
+      # Supabase (lecture sync_queue)
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      # Mode
+      - HEADLESS=true
+      - TARGETED_POLL_INTERVAL=${TARGETED_POLL_INTERVAL:-30}
+      # Proxy résidentiel (optionnel — évite les CAPTCHAs)
+      - PROXY_URL=${PROXY_URL:-}
+    volumes:
+      - airbnb-output:/app/output
+    networks:
+      - airbnb-network
+    restart: unless-stopped
+    profiles:
+      - targeted
+
+volumes:
+  airbnb-output:
+    driver: local
+
+networks:
+  airbnb-network:
+    driver: bridge

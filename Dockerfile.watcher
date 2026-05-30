@@ -1,0 +1,24 @@
+# ============================================================================
+# Dockerfile léger pour iCal Watcher (sans Chromium)
+# ============================================================================
+FROM python:3.11-slim
+
+LABEL maintainer="Loft Algérie"
+LABEL description="iCal Watcher — surveillance légère des calendriers Airbnb"
+LABEL version="1.0.0"
+
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+COPY requirements.watcher.txt .
+RUN pip install --no-cache-dir -r requirements.watcher.txt
+
+COPY ical_watcher.py .
+COPY airbnb_api_client.py .
+COPY .env .
+
+VOLUME ["/app/output"]
+
+CMD ["python", "ical_watcher.py"]

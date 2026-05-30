@@ -1,0 +1,46 @@
+# ============================================================
+# docker-compose.yml — Airbnb Scraper
+# ============================================================
+# Usage :
+#   docker compose up          ← lancer le scraper
+#   docker compose up --build  ← reconstruire et lancer
+# ============================================================
+
+services:
+  airbnb-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: airbnb-scraper
+
+    # ── Variables d'environnement depuis le fichier .env ─────
+    env_file:
+      - .env
+
+    # ── Ports VNC (pour résoudre les CAPTCHA) ───────────────
+    ports:
+      - "6080:6080"         # noVNC (navigateur web)
+      - "5900:5900"         # VNC natif (optionnel)
+
+    # ── Volume : les fichiers CSV/JSON apparaissent ici ──────
+    volumes:
+      - ./output:/app/output
+
+    # ── Ressources (Chromium est gourmand) ───────────────────
+    shm_size: "2gb"         # Mémoire partagée pour Chromium
+    mem_limit: "4g"         # Limite mémoire totale (Xvfb + Chromium + noVNC)
+
+    # ── Sécurité ─────────────────────────────────────────────
+    security_opt:
+      - no-new-privileges:true
+
+    # ── Redémarrage ──────────────────────────────────────────
+    restart: "no"           # Ne pas relancer automatiquement
+
+    # ── Logs ─────────────────────────────────────────────────
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,18 @@
+# ============================================================================
+# Dépendances Python pour Airbnb Scraper
+# ============================================================================
+
+# Scraping et navigation
+cloakbrowser>=0.2.0
+playwright>=1.40.0
+pyotp>=2.9.0
+
+# API et HTTP
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Data processing
+pandas>=2.1.0
+
+# Supabase (optionnel, pour accès direct)
+# supabase>=2.0.0

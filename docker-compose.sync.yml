@@ -1,0 +1,28 @@
+services:
+  # Watcher iCal
+  ical-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ical-watcher
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+    restart: unless-stopped
+    command: python ical_watcher.py
+
+  # Targeted scraper
+  targeted-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: targeted-scraper
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+    shm_size: "2gb"
+    mem_limit: "4g"
+    restart: unless-stopped
+    command: python targeted_scraper.py
