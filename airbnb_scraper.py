@@ -53,6 +53,14 @@ except Exception as e:
     print(f"⚠️  API Next.js désactivée : {e}")
     USE_API = False
 
+# ── Conversion des devises (v2.1) ────────────────────────────
+try:
+    from currency_converter import enrich_with_currency_ratio
+    USE_CURRENCY_CONVERSION = True
+except Exception as e:
+    print(f"⚠️  Conversion des devises désactivée : {e}")
+    USE_CURRENCY_CONVERSION = False
+
 
 # ============================================================
 # CONFIGURATION — variables d'environnement (.env)
@@ -72,6 +80,7 @@ OUTPUT_CSV  = os.environ.get("OUTPUT_CSV",      "output/reservations_airbnb.csv"
 OUTPUT_JSON = os.environ.get("OUTPUT_JSON",     "output/reservations_airbnb.json")
 HEADLESS    = os.environ.get("HEADLESS", "false").lower() == "true"
 PROXY_URL   = os.environ.get("PROXY_URL", "")  # ex: http://user:pass@residential-proxy:port
+COLLECT_CONTACTS = os.environ.get("COLLECT_CONTACTS", "false").lower() == "true"  # Collecter les coordonnées
 # ============================================================
 
 
@@ -672,6 +681,125 @@ def collect_ical_urls(page, listing_ids: list[str]) -> dict[str, str]:
 
 
 # ============================================================
+# COLLECTE DES COORDONNÉES (NOUVEAU V2.1)
+# ============================================================
+
+def get_guest_contact_info(page, confirmation_code):
+    """
+    Récupère les coordonnées d'un voyageur pour une réservation.
+    
+    Returns:
+        dict: {"phone": "...", "email": "..."}
+    """
+    try:
+        # Aller sur la page de la réservation
+        url = f"https://fr.airbnb.com/hosting/stay/{confirmation_code}?tab=upcoming"
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(2000)
+        
+        phone = None
+        email = None
+        
+        # Chercher dans le contenu de la page
+        page_content = page.content()
+        
+        import re
+        
+        # Pattern pour "Numéro de téléphone : Nom\n+XX XXX XX XX XX"
+        phone_pattern = r'Numéro de téléphone[:\s]*[^+\n]*\n?\s*(\+?\d[\d\s\-\(\)]{8,})'
+        match = re.search(phone_pattern, page_content, re.IGNORECASE)
+        if match:
+            phone = match.group(1).strip()
+        
+        # Fallback : tous les numéros internationaux
+        if not phone:
+            phone_patterns = [r'\+\d{1,4}[\s\-]?\d{1,4}[\s\-]?\d{1,4}[\s\-]?\d{1,4}[\s\-]?\d{1,9}']
+            for pattern in phone_patterns:
+                matches = re.findall(pattern, page_content)
+                if matches:
+                    for match in matches:
+                        if match.startswith('+'):
+                            phone = match
+                            break
+                if phone:
+                    break
+        
+        # Chercher l'email
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        email_matches = re.findall(email_pattern, page_content)
+        if email_matches:
+            for em in email_matches:
+                if "airbnb" not in em.lower():
+                    email = em
+                    break
+        
+        return {"phone": phone or "", "email": email or ""}
+        
+    except Exception:
+        return {"phone": "", "email": ""}
+
+
+def enrich_with_contacts(page, reservations, collect_contacts=True):
+    """
+    Enrichit les réservations avec les coordonnées des voyageurs.
+    
+    Args:
+        page: Page Playwright
+        reservations: Liste des réservations
+        collect_contacts: Si True, collecte les coordonnées (plus lent)
+    
+    Returns:
+        Liste des réservations enrichies
+    """
+    if not collect_contacts:
+        # Ajouter des champs vides
+        for r in reservations:
+            r["telephone_voyageur"] = ""
+            r["email_voyageur"] = ""
+        return reservations
+    
+    print(f"\n📞 Enrichissement avec les coordonnées...")
+    print(f"   ⏳ Cela prendra ~5 secondes par réservation")
+    
+    # Filtrer les réservations actives uniquement
+    active_statuses = [
+        "confirmée", "upcoming", "séjour en cours", "en cours",
+        "à venir", "future", "accepted", "modification de voyage envoyée"
+    ]
+    
+    enriched_count = 0
+    
+    for i, reservation in enumerate(reservations):
+        confirmation_code = reservation.get("id", "")
+        statut = reservation.get("statut", "").lower()
+        
+        # Initialiser les champs
+        reservation["telephone_voyageur"] = ""
+        reservation["email_voyageur"] = ""
+        
+        # Collecter uniquement pour les réservations actives
+        if statut in active_statuses and confirmation_code:
+            try:
+                contacts = get_guest_contact_info(page, confirmation_code)
+                reservation["telephone_voyageur"] = contacts["phone"]
+                reservation["email_voyageur"] = contacts["email"]
+                
+                if contacts["phone"]:
+                    enriched_count += 1
+                    if (enriched_count) % 10 == 0:
+                        print(f"   ↳ {enriched_count} coordonnées collectées...")
+                
+                # Pause pour éviter le rate limiting
+                time.sleep(2)
+                
+            except Exception:
+                pass
+    
+    print(f"   ✅ {enriched_count} réservations enrichies avec coordonnées")
+    return reservations
+
+
+# ============================================================
 # PARSING DES RÉSERVATIONS (votre logique v1 conservée)
 # ============================================================
 
@@ -1095,19 +1223,61 @@ def main():
             ical_urls = collect_ical_urls(page, listing_ids)
         else:
             print("⚠️  Aucun listing_id trouvé — iCal non collecté")
+        
+        # ── Étape 6 : Enrichissement avec coordonnées (NOUVEAU v2.1) ───
+        if COLLECT_CONTACTS:
+            reservations = enrich_with_contacts(page, reservations, collect_contacts=True)
+        else:
+            # Ajouter des champs vides
+            for r in reservations:
+                r["telephone_voyageur"] = ""
+                r["email_voyageur"] = ""
+        
+        # ── Étape 6.5 : Conversion des devises (NOUVEAU v2.1) ───────────
+        if USE_CURRENCY_CONVERSION:
+            reservations = enrich_with_currency_ratio(reservations)
+        else:
+            # Ajouter des champs par défaut
+            for r in reservations:
+                r["currency_code"] = r.get("devise", "DZD").upper()
+                r["currency_ratio"] = 1.0
+
+        # ── Étape 6.6 : Conversion en DZD (local) + renommage contacts ──
+        # Le service Next.js stocke montant_total/devise tels quels.
+        # On convertit donc ici vers DZD en utilisant le currency_ratio calculé.
+        for r in reservations:
+            devise = (r.get("devise") or "DZD").upper()
+            if devise != "DZD":
+                ratio = r.get("currency_ratio", 1.0) or 1.0
+                try:
+                    montant_orig = float(r.get("montant_total", 0) or 0)
+                    r["montant_total"] = round(montant_orig * ratio, 2)
+                    r["devise"] = "DZD"
+                except (TypeError, ValueError):
+                    pass
+            # Renommer les coordonnées vers les noms attendus par l'API
+            if "telephone_voyageur" in r and "guest_phone" not in r:
+                raw = r.pop("telephone_voyageur")
+                if isinstance(raw, str) and sum(c.isdigit() for c in raw) >= 5:
+                    r["guest_phone"] = raw.strip()
+                else:
+                    r["guest_phone"] = ""
+            if "email_voyageur" in r and "guest_email" not in r:
+                v = r.pop("email_voyageur")
+                r["guest_email"] = v if (v and "@" in v) else ""
 
     finally:
         browser.close()
 
-    # ── Étape 6 : Export local CSV + JSON (conservé v1) ───────
+    # ── Étape 7 : Export local CSV + JSON (conservé v1) ───────
     print(f"\n💾 Export local...")
     export_csv(reservations,  OUTPUT_CSV)
     export_json(reservations, OUTPUT_JSON)
 
-    # ── Étape 7 : Push API Next.js (NOUVEAU v2) ───────────────
+    # ── Étape 8 : Push API Next.js (NOUVEAU v2) ───────────────
     push_to_nextjs(reservations, ical_urls, sync_type='full')
 
-    # ── Étape 8 : Log de sync ─────────────────────────────────
+    # ── Étape 9 : Log de sync ─────────────────────────────────
     duration = time.time() - start_time
     if USE_API:
         try:

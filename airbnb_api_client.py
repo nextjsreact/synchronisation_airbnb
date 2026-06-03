@@ -19,6 +19,7 @@ Usage :
 
 import os
 import time
+import json
 import requests
 from typing import List, Dict, Any
 from datetime import datetime
@@ -124,30 +125,73 @@ def send_to_nextjs_api(
 
     total_processed = 0
     total_created = 0
+    total_updated = 0
+    total_linked = 0
+    total_skipped = 0
+    total_conflicts = 0
     total_errors = []
 
     for batch_idx, batch in enumerate(batches, 1):
-        # Convertir les types pour correspondre au schéma Zod de l'API
+        # L'API attend les noms de champs FRANÇAIS (voyageur, date_arrivee, etc.)
+        # cf. ReservationSchema dans app/api/airbnb/sync/route.ts
         sanitized_batch = []
-        optional_string_fields = [
-            "guest_email", "guest_phone", "guest_nationality",
-            "special_requests", "base_price", "cleaning_fee",
-            "service_fee", "taxes"
-        ]
+        # Champs requis par le Zod schema
+        required_fr_fields = (
+            "id", "listing_id", "statut", "voyageur", "nb_voyageurs",
+            "date_arrivee", "date_depart", "nb_nuits", "montant_total", "devise",
+        )
         for r in batch:
             r_copy = dict(r)
+            # ── Conversion en DZD (local) si devise étrangère ────────────
+            # Le service Next.js stocke montant_total/devise tels quels.
+            # On convertit donc ici vers DZD en utilisant le currency_ratio.
+            devise = (r_copy.get("devise") or r_copy.get("currency_code") or "DZD").upper()
+            if devise != "DZD":
+                ratio = r_copy.get("currency_ratio", 1.0) or 1.0
+                try:
+                    montant_orig = float(r_copy.get("montant_total", 0) or 0)
+                    r_copy["montant_total"] = round(montant_orig * ratio, 2)
+                    r_copy["devise"] = "DZD"
+                except (TypeError, ValueError):
+                    pass
+            # ── Renommer les contacts vers les noms attendus par l'API ──
+            if "telephone_voyageur" in r_copy and "guest_phone" not in r_copy:
+                raw = r_copy.pop("telephone_voyageur")
+                if isinstance(raw, str) and sum(c.isdigit() for c in raw) >= 5:
+                    r_copy["guest_phone"] = raw.strip()
+                else:
+                    r_copy["guest_phone"] = ""
+            if "email_voyageur" in r_copy and "guest_email" not in r_copy:
+                v = r_copy.pop("email_voyageur")
+                r_copy["guest_email"] = v if (v and "@" in v) else ""
             # listing_id doit être un string (Zod: z.string())
             if "listing_id" in r_copy and r_copy["listing_id"] is not None:
                 r_copy["listing_id"] = str(r_copy["listing_id"])
-            # Supprimer les champs optionnels null (Zod les rejette)
-            for field in optional_string_fields:
+            # Champs numériques: s'assurer qu'ils sont des nombres (Zod: z.number())
+            for nf in ("nb_voyageurs", "nb_nuits", "montant_total"):
+                if nf in r_copy and r_copy[nf] is not None:
+                    try:
+                        v = r_copy[nf]
+                        if isinstance(v, str):
+                            v = float(v)
+                        r_copy[nf] = int(v) if nf in ("nb_voyageurs", "nb_nuits") else v
+                    except (TypeError, ValueError):
+                        r_copy[nf] = 0
+                elif nf in required_fr_fields and r_copy.get(nf) is None:
+                    r_copy[nf] = 0
+            # Champs optionnels null → retirer
+            for field in ("base_price", "cleaning_fee", "service_fee", "taxes",
+                          "guest_email", "guest_phone", "guest_nationality", "special_requests"):
                 if field in r_copy and r_copy[field] is None:
                     del r_copy[field]
-            # montant_total doit être >= 0 (Zod: z.number().nonnegative())
-            if "montant_total" in r_copy and r_copy["montant_total"] is not None:
-                if r_copy["montant_total"] < 0:
-                    r_copy["montant_total"] = 0
-            sanitized_batch.append(r_copy)
+            # Vérifier champs requis
+            for req in required_fr_fields:
+                if req not in r_copy or r_copy[req] in (None, "", 0):
+                    print(f"   ⚠️  Champ FR requis manquant: {req}={r_copy.get(req)} → reservation ignorée")
+                    r_copy = None
+                    break
+            if r_copy is not None:
+                sanitized_batch.append(r_copy)
 
         payload = {
             "reservations": sanitized_batch,
@@ -173,6 +217,10 @@ def send_to_nextjs_api(
                     metrics = result.get("metrics", {})
                     total_processed += metrics.get("processed", 0)
                     total_created += metrics.get("created", 0)
+                    total_updated += metrics.get("updated", 0)
+                    total_linked += metrics.get("linked", 0)
+                    total_skipped += metrics.get("skipped", 0)
+                    total_conflicts += metrics.get("conflicts", 0)
                     if result.get("errors"):
                         total_errors.extend(result["errors"])
                     if batch_idx % 5 == 0 or batch_idx == len(batches):
@@ -184,13 +232,21 @@ def send_to_nextjs_api(
                     error_data = response.json()
                     error_msg += f": {error_data.get('error', 'Unknown error')}"
                     # Log les détails de validation Zod pour debug
-                    if response.status_code == 400 and error_data.get('details'):
-                        print(f"   🔍 Détails validation batch {batch_idx}:")
-                        for detail in error_data['details'][:3]:
-                            path = '.'.join(str(p) for p in detail.get('path', []))
-                            print(f"      - {path}: {detail.get('message', '')}")
-                except:
+                    if response.status_code == 400:
+                        # Toujours afficher le body complet en 400 pour debug
+                        print(f"   🔍 Body réponse 400 (batch {batch_idx}): {json.dumps(error_data, ensure_ascii=False)[:800]}")
+                        if error_data.get('details'):
+                            print(f"   🔍 Détails validation batch {batch_idx}:")
+                            for detail in error_data['details'][:5]:
+                                path = '.'.join(str(p) for p in detail.get('path', []))
+                                print(f"      - {path}: {detail.get('message', '')}")
+                        # Afficher la 1ère reservation du batch (sanitisée) pour comparer au schéma
+                        if sanitized_batch:
+                            sample = {k: v for k, v in sanitized_batch[0].items() if v is not None}
+                            print(f"   📋 Payload sanitisée envoyée: {json.dumps(sample, ensure_ascii=False, default=str)[:600]}")
+                except Exception as je:
                     error_msg += f": {response.text[:200]}"
+                    print(f"   🔍 Body brut 400 (non-JSON): {response.text[:500]}")
 
                 if response.status_code == 429:
                     retry_after = int(response.headers.get('Retry-After', RETRY_DELAY * 2))
@@ -236,7 +292,11 @@ def send_to_nextjs_api(
         "metrics": {
             "processed": total_processed,
             "created": total_created,
+            "updated": total_updated,
+            "linked": total_linked,
+            "skipped": total_skipped,
             "failed": len(total_errors),
+            "conflicts": total_conflicts,
         },
         "errors": total_errors
     }
@@ -256,6 +316,7 @@ def _print_success(result: Dict[str, Any]):
     print(f"      • Traitées:  {metrics.get('processed', 0)}")
     print(f"      • Créées:    {metrics.get('created', 0)}")
     print(f"      • Mises à jour: {metrics.get('updated', 0)}")
+    print(f"      • Liées (fuzzy): {metrics.get('linked', 0)}")
     print(f"      • Ignorées:  {metrics.get('skipped', 0)}")
     print(f"      • Échouées:  {metrics.get('failed', 0)}")
     print(f"      • Conflits:  {metrics.get('conflicts', 0)}")
