@@ -16,7 +16,7 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv(encoding='utf-8')
+load_dotenv()  # Supprime encoding='utf-8' pour eviter les erreurs
 
 # ── Config ──────────────────────────────────────────────
 SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "https://zlpzuyctjhajdwlxzdzk.supabase.co"

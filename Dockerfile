@@ -72,9 +72,11 @@ RUN python -m cloakbrowser install
 # Copier les fichiers du scraper
 COPY airbnb_scraper.py .
 COPY airbnb_api_client.py .
+COPY currency_converter.py .
 COPY collect_ical_urls.py .
 COPY ical_watcher.py .
 COPY targeted_scraper.py .
+COPY monitoring_watcher.py .
 COPY .env .
 
 # Créer le répertoire de sortie

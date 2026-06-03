@@ -26,3 +26,14 @@ services:
     mem_limit: "4g"
     restart: unless-stopped
     command: python targeted_scraper.py
+
+  # Monitoring watcher (alertes 24h sans nouvelle reservation)
+  monitoring-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: monitoring-watcher
+    env_file:
+      - .env
+    restart: unless-stopped
+    command: python monitoring_watcher.py
