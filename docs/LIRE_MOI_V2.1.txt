@@ -1,0 +1,226 @@
+================================================================================
+🎉 AIRBNB SCRAPER V2.1 - INTÉGRATION COMPLÈTE
+================================================================================
+
+Date : 31 mai 2026
+Statut : ✅ Code intégré, ⚠️ Tests en conditions réelles à faire
+
+================================================================================
+🆕 NOUVEAUTÉS V2.1
+================================================================================
+
+✅ Collecte des coordonnées des voyageurs (téléphone + email)
+✅ Intégration dans le flux complet (avant insertion Supabase)
+✅ Configuration flexible (automatique ou manuelle)
+✅ Documentation complète
+
+================================================================================
+📋 FICHIERS CRÉÉS
+================================================================================
+
+1. INTEGRATION_TERMINEE.md ⭐
+   → Résumé complet de l'intégration
+
+2. README_V2.1.md
+   → Guide de démarrage rapide
+
+3. AVANT_APRES_V2.1.md
+   → Comparaison visuelle avant/après
+
+4. RESUME_INTEGRATION_V2.1.md
+   → Résumé concis
+
+5. GUIDE_TEST_INTEGRATION.md
+   → Guide de test détaillé (étape par étape)
+
+6. INTEGRATION_CONTACTS_COMPLETE.md
+   → Documentation technique complète
+
+7. TEST_INTEGRATION_CONTACTS.bat
+   → Script de test automatique
+
+================================================================================
+🚀 DÉMARRAGE RAPIDE
+================================================================================
+
+1. VÉRIFIER L'INTÉGRATION
+   -------------------------
+   Commande : TEST_INTEGRATION_CONTACTS.bat
+   
+   Résultat attendu :
+   ✅ Fonction enrich_with_contacts trouvée
+   ✅ Variable COLLECT_CONTACTS trouvée
+   ✅ Champ telephone_voyageur trouvé
+
+2. CONFIGURER
+   -----------
+   Fichier : .env
+   
+   Option A (collecte automatique) :
+   COLLECT_CONTACTS=true
+   
+   Option B (collecte manuelle - recommandé) :
+   COLLECT_CONTACTS=false
+
+3. TESTER
+   -------
+   a. Activer la collecte : COLLECT_CONTACTS=true
+   b. Lancer le scraping : SCRAPING_COMPLET_MAINTENANT.bat
+   c. Vérifier les résultats :
+      - output/reservations_airbnb.json (champs telephone_voyageur et email_voyageur)
+      - Supabase (colonnes guest_phone et guest_email)
+
+================================================================================
+⚠️ PRÉREQUIS IMPORTANTS
+================================================================================
+
+1. SUPABASE
+   ---------
+   Colonnes nécessaires dans la table "reservations" :
+   - guest_phone (TEXT)
+   - guest_email (TEXT)
+   
+   SQL pour créer les colonnes :
+   
+   ALTER TABLE reservations
+   ADD COLUMN IF NOT EXISTS guest_phone TEXT,
+   ADD COLUMN IF NOT EXISTS guest_email TEXT;
+
+2. API NEXT.JS
+   ------------
+   Mapping nécessaire dans /api/airbnb/sync :
+   
+   const reservation = {
+     guest_phone: data.telephone_voyageur,  // ✅ AJOUTER
+     guest_email: data.email_voyageur,      // ✅ AJOUTER
+     // ... autres champs
+   };
+
+================================================================================
+💡 RECOMMANDATION
+================================================================================
+
+Pour la production : Collecte manuelle ✅
+
+Configuration :
+COLLECT_CONTACTS=false
+
+Raisons :
+✅ Scraping rapide (pas de +5 sec par réservation)
+✅ Moins de charge sur Airbnb (évite le rate limiting)
+✅ Collecte ciblée quand nécessaire
+
+Collecte manuelle :
+7_collecter_contacts.bat
+
+Quand collecter :
+- 1-2 jours avant l'arrivée des voyageurs
+- En cas d'urgence (besoin de contacter rapidement)
+
+================================================================================
+📊 EXEMPLE DE DONNÉES
+================================================================================
+
+AVANT (V2.0) :
+{
+  "id": "HM4TB95HKS",
+  "voyageur": "Hamza",
+  "logement": "Choco Loft"
+}
+
+APRÈS (V2.1) ✅ :
+{
+  "id": "HM4TB95HKS",
+  "voyageur": "Hamza",
+  "telephone_voyageur": "+213 793 86 24 94",  // ✅ NOUVEAU
+  "email_voyageur": "hamza@example.com",      // ✅ NOUVEAU
+  "logement": "Choco Loft"
+}
+
+================================================================================
+📋 CHECKLIST
+================================================================================
+
+Code ✅
+-------
+[x] airbnb_scraper.py intégré
+[x] targeted_scraper.py intégré
+[x] .env configuré
+[x] Tests automatiques passent
+
+Infrastructure ⚠️
+-----------------
+[ ] Colonnes Supabase créées (guest_phone, guest_email)
+[ ] API Next.js mise à jour (mapping des champs)
+
+Tests ⚠️
+--------
+[ ] Test en conditions réelles (scraping complet)
+[ ] Vérification Supabase (données insérées)
+[ ] Vérification performance (temps acceptable)
+
+================================================================================
+🎯 PROCHAINES ÉTAPES
+================================================================================
+
+1. Vérifier Supabase
+   ------------------
+   - Créer les colonnes guest_phone et guest_email
+   - Voir le SQL ci-dessus
+
+2. Vérifier l'API Next.js
+   -----------------------
+   - Ajouter le mapping des champs
+   - Voir l'exemple ci-dessus
+
+3. Tester en conditions réelles
+   -----------------------------
+   - Activer COLLECT_CONTACTS=true
+   - Lancer SCRAPING_COMPLET_MAINTENANT.bat
+   - Vérifier les résultats
+
+4. Lire la documentation
+   ----------------------
+   - INTEGRATION_TERMINEE.md (résumé complet)
+   - GUIDE_TEST_INTEGRATION.md (guide détaillé)
+
+================================================================================
+📚 DOCUMENTATION COMPLÈTE
+================================================================================
+
+Commencer par :
+1. INTEGRATION_TERMINEE.md ⭐ (résumé complet)
+2. README_V2.1.md (démarrage rapide)
+3. AVANT_APRES_V2.1.md (comparaison visuelle)
+
+Pour les tests :
+4. GUIDE_TEST_INTEGRATION.md (guide détaillé)
+5. TEST_INTEGRATION_CONTACTS.bat (script automatique)
+
+Pour les détails techniques :
+6. INTEGRATION_CONTACTS_COMPLETE.md (documentation technique)
+7. FLUX_COMPLET_V2.1.md (flux complet)
+
+================================================================================
+🎉 RÉSUMÉ
+================================================================================
+
+✅ Ce qui a été fait :
+- Code intégré dans airbnb_scraper.py
+- Code intégré dans targeted_scraper.py
+- Variable COLLECT_CONTACTS ajoutée
+- Tests automatiques créés
+- Documentation complète créée
+
+⚠️ Ce qui reste à faire :
+- Vérifier/créer les colonnes Supabase
+- Vérifier/mettre à jour l'API Next.js
+- Tester en conditions réelles
+
+================================================================================
+
+Version : 2.1
+Date : 31 mai 2026
+Créé par : Kiro
+
+================================================================================
