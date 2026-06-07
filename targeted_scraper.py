@@ -370,12 +370,17 @@ def process_entry(page, entry):
         # Convertir montant_total en DZD (local) en utilisant le currency_ratio
         # Le service Next.js stocke montant_total tel quel, donc on fait la conversion ici
         for r in reservations:
-            devise = (r.get("devise") or "DZD").upper()
+            devise = (r.get("devise") or r.get("currency_code") or "DZD").upper()
             if devise != "DZD":
                 ratio = r.get("currency_ratio", 1.0) or 1.0
                 try:
                     montant_orig = float(r.get("montant_total", 0) or 0)
+                    # Préserver la trace de la devise source pour audit/transparence
+                    r["original_currency_code"] = devise
+                    r["original_amount"] = round(montant_orig, 2)
+                    # Conversion vers DZD
                     r["montant_total"] = round(montant_orig * ratio, 2)
+                    r["currency_ratio"] = ratio
                     r["devise"] = "DZD"
                 except (TypeError, ValueError):
                     pass
