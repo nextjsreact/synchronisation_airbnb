@@ -150,8 +150,12 @@ def send_to_nextjs_api(
                 ratio = r_copy.get("currency_ratio", 1.0) or 1.0
                 try:
                     montant_orig = float(r_copy.get("montant_total", 0) or 0)
+                    # Conversion vers DZD (montant_total) mais on garde la devise source
+                    # dans devise (mappé vers currency_code) et le taux pour traçabilité
                     r_copy["montant_total"] = round(montant_orig * ratio, 2)
-                    r_copy["devise"] = "DZD"
+                    r_copy["currency_ratio"] = ratio
+                    r_copy["original_currency_code"] = devise
+                    r_copy["original_amount"] = round(montant_orig, 2)
                 except (TypeError, ValueError):
                     pass
             # ── Renommer les contacts vers les noms attendus par l'API ──
