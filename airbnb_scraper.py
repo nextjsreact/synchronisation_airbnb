@@ -844,7 +844,13 @@ def _parse_earnings(earnings_str):
 
 
 def _parse_reservation_node(node):
-    earnings_raw = node.get("earnings", "")
+    earnings_raw = node.get("earnings")
+    if earnings_raw is None:
+        reservation = node.get("reservation", {})
+        if isinstance(reservation, dict):
+            earnings_raw = reservation.get("earnings", "")
+    if earnings_raw is None:
+        earnings_raw = ""
     if isinstance(earnings_raw, dict):
         montant = earnings_raw.get("amount", 0)
         devise  = earnings_raw.get("currency", "GBP")
@@ -854,12 +860,18 @@ def _parse_reservation_node(node):
     guest_count = _extract_field(node,
         ["guest_details", "number_of_guests"],
         ["guest_details", "number_of_adults"],
-        ["guest_count"], ["guestCount"], ["numberOfGuests"],
+        ["guest_count"], ["guestCount"],
+        ["numberOfGuests"], ["number_of_guests"],
+        ["total_guests"], ["guests"],
+        ["guest", "count"], ["guest", "guest_count"],
+        ["reservation", "guest_count"],
+        ["reservation", "guest_details", "number_of_guests"],
         default=0)
 
     voyageur = _extract_field(node,
         ["guest_user", "full_name"],
         ["guest_user", "first_name"],
+        ["guest", "full_name"],
         ["guest", "first_name"], ["guest", "name"], ["guestName"],
         default="")
 
@@ -867,27 +879,30 @@ def _parse_reservation_node(node):
         ["user_facing_status_localized"],
         ["user_facing_status_key"],
         ["status"], ["reservationStatus"],
+        ["reservation", "status"],
         default="")
 
     logement = _extract_field(node,
         ["listing_name"], ["listingName"],
         ["listing", "name"], ["listing", "title"],
+        ["reservation", "listing", "name"],
         default="")
 
     date_creation = _extract_field(node,
         ["booked_date"], ["created_at"], ["createdAt"],
+        ["date_creation"],
         default="")
 
     return {
-        "id":            _extract_field(node, ["confirmation_code"], ["confirmationCode"], ["id"], default=""),
+        "id":            _extract_field(node, ["confirmation_code"], ["confirmationCode"], ["id"], ["reservation", "confirmation_code"], ["reservation", "id"], default=""),
         "statut":        statut,
         "voyageur":      voyageur,
         "nb_voyageurs":  guest_count,
         "logement":      logement,
-        "listing_id":    _extract_field(node, ["listing_id"], ["listingId"], default=""),
-        "date_arrivee":  _extract_field(node, ["start_date"], ["checkIn"], ["check_in"], default=""),
-        "date_depart":   _extract_field(node, ["end_date"], ["checkOut"], ["check_out"], default=""),
-        "nb_nuits":      _extract_field(node, ["nights"], ["nightsCount"], default=0),
+        "listing_id":    _extract_field(node, ["listing_id"], ["listingId"], ["listing", "id"], default=""),
+        "date_arrivee":  _extract_field(node, ["start_date"], ["checkIn"], ["check_in"], ["reservation", "start_date"], default=""),
+        "date_depart":   _extract_field(node, ["end_date"], ["checkOut"], ["check_out"], ["reservation", "end_date"], default=""),
+        "nb_nuits":      _extract_field(node, ["nights"], ["nightsCount"], ["reservation", "nights"], default=0),
         "montant_total": montant,
         "devise":        devise,
         "date_creation": date_creation,

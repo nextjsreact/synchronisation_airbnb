@@ -419,6 +419,68 @@ def log_sync(sync_type: str, status: str, listings_count: int,
     pass
 
 
+def notify_cancel_check(listing_id: str) -> bool:
+    """
+    Notifie Next.js qu'un listing a 0 réservation (possible annulation).
+    Next.js vérifie s'il y a des réservations actives dans Supabase
+    avec airbnb_confirmation_code et les annule si nécessaire.
+    
+    Returns:
+        True si l'appel a réussi, False sinon
+    """
+    if not API_KEY:
+        print("   ⚠️  NEXTJS_API_KEY non configurée — skip cancel check")
+        return False
+
+    cancel_url = API_URL + "/cancel-check"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "listing_id": str(listing_id),
+        "sync_metadata": {
+            "sync_type": "targeted",
+            "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "script_version": "2.1.0",
+        },
+    }
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.post(
+                cancel_url,
+                json=payload,
+                headers=headers,
+                timeout=TIMEOUT,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                count = result.get("cancelled_count", 0)
+                msg = result.get("message", "")
+                if count > 0:
+                    print(f"   🔔 {count} réservation(s) annulée(s) par Next.js")
+                elif msg:
+                    print(f"   ℹ️  Cancel check: {msg}")
+                else:
+                    print(f"   ℹ️  Cancel check: aucune résa à annuler")
+                return True
+            else:
+                print(f"   ⚠️  Cancel check tentative {attempt}/{MAX_RETRIES}: HTTP {resp.status_code}")
+        except requests.Timeout:
+            print(f"   ⚠️  Cancel check tentative {attempt}/{MAX_RETRIES}: timeout")
+        except requests.ConnectionError:
+            print(f"   ⚠️  Cancel check tentative {attempt}/{MAX_RETRIES}: connexion refusée")
+        except Exception as e:
+            print(f"   ⚠️  Cancel check tentative {attempt}/{MAX_RETRIES}: {e}")
+
+        if attempt < MAX_RETRIES:
+            time.sleep(RETRY_DELAY * attempt)
+
+    print("   ❌ Cancel check: échec après toutes les tentatives")
+    return False
+
+
 # ============================================================================
 # TEST
 # ============================================================================

@@ -40,7 +40,7 @@ from airbnb_scraper import (
     SESSION_FILE,
     is_logged_in,
 )
-from airbnb_api_client import upsert_reservations, check_api_health
+from airbnb_api_client import upsert_reservations, check_api_health, notify_cancel_check
 from currency_converter import enrich_with_currency_ratio
 
 # ── Configuration ─────────────────────────────────────────
@@ -348,8 +348,14 @@ def process_entry(page, entry):
             return
 
         if not reservations:
-            # 0 reservation = comportement normal (loft sans résa upcoming), pas une erreur
-            print(f"   ✅ 0 reservation trouvee pour {listing_id} — loft sans activite, statut 'done'")
+            print(f"   ✅ 0 reservation trouvee pour {listing_id}")
+            # Notifier Next.js pour vérifier les annulations
+            try:
+                print(f"   📞 notify_cancel_check({listing_id})...")
+                notify_cancel_check(listing_id)
+            except Exception as e:
+                print(f"   ⚠️  Erreur cancel check: {e}")
+            print(f"   → statut 'done'")
             mark_done(entry_id)
             return
 
