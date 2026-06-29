@@ -114,7 +114,7 @@ def send_to_nextjs_api(
         "Content-Type": "application/json"
     }
 
-    batch_size = 50
+    batch_size = 20
     total = len(reservations)
     batches = [reservations[i:i+batch_size] for i in range(0, total, batch_size)]
 

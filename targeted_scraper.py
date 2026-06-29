@@ -282,6 +282,7 @@ def scrape_fallback_upcoming_only(page, target_listing_id):
             page.goto(tab_url, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(3000)
 
+            empty_pages = 0
             for page_num in range(200):
                 new_in_page = 0
                 total = page_responses[-1]["total_count"] if page_responses else 0
@@ -297,6 +298,15 @@ def scrape_fallback_upcoming_only(page, target_listing_id):
                             new_in_page += 1
                 print(f"      Page {page_num+1}: +{new_in_page} (total:{total}, cumul:{len(target_reservations)})")
                 page_responses.clear()
+
+                # Early-stop : si 20 pages consécutives sans nouveau match, arrêter
+                if new_in_page == 0:
+                    empty_pages += 1
+                    if empty_pages >= 20:
+                        print(f"   🛑 Early-stop : {empty_pages} pages vides consécutives — arrêt du scan")
+                        break
+                else:
+                    empty_pages = 0
 
                 next_btn = None
                 for selector in [
