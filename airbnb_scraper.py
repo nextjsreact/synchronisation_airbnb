@@ -200,6 +200,11 @@ def login(page):
         "Continuer avec l'e-mail",
         "Continue with email",
         "Se connecter par e-mail",
+        "Continuer avec email",
+        "Continue with phone or email",
+        "Continuer avec un téléphone ou e-mail",
+        "Log in",
+        "Se connecter",
     ]:
         try:
             btn = page.locator(f"text={btn_text}")
@@ -215,6 +220,11 @@ def login(page):
     for selector in [
         'input[type="email"]', 'input[name="email"]',
         'input[id*="email" i]', 'input[placeholder*="mail" i]',
+        'input[aria-label*="mail" i]', 'input[aria-label*="email" i]',
+        'input[data-testid*="email" i]', 'input[data-testid*="input-user" i]',
+        'input[autocomplete="email"]', 'input[autocomplete="username"]',
+        'input[placeholder*="téléphone" i]', 'input[placeholder*="phone" i]',
+        'input[type="tel"]',
         'input[type="text"]',
     ]:
         try:
@@ -228,6 +238,29 @@ def login(page):
             continue
 
     if not email_filled:
+        # Debug: screenshot de la page pour diagnostic
+        try:
+            debug_path = os.path.join(os.path.dirname(__file__), "debug_login.png")
+            page.screenshot(path=debug_path)
+            print(f"   📸 Screenshot debug sauvegardé : {debug_path}")
+            # Dump les inputs visibles pour diagnostic
+            all_inputs = page.locator("input").all()
+            print(f"   🔍 {len(all_inputs)} input(s) trouvé(s) sur la page :")
+            for inp in all_inputs:
+                try:
+                    attrs = {
+                        "type": inp.get_attribute("type"),
+                        "name": inp.get_attribute("name"),
+                        "id": inp.get_attribute("id"),
+                        "placeholder": inp.get_attribute("placeholder"),
+                        "aria-label": inp.get_attribute("aria-label"),
+                    }
+                    visible = inp.is_visible()
+                    print(f"      - visible={visible} attrs={attrs}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
         raise RuntimeError("Champ email introuvable")
 
     page.wait_for_timeout(500)

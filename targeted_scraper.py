@@ -247,76 +247,81 @@ def _resolve_loft_id(listing_id):
 
 def scrape_fallback_upcoming_only(page, target_listing_id):
     """
-    Fallback optimisé : scrape UNIQUEMENT /upcoming via interception réseau
-    api/v2/reservations, et filtre par listing_id à la volée (pas d'accumulation
-    de 5000+ réservations inutiles).
-    Beaucoup plus rapide (~1-2 min) que scrape_fallback() complet.
+    Fallback optimisé : scrape /upcoming puis /all si besoin.
     """
     from airbnb_scraper import _parse_reservation_node
 
     target_listing_id_str = str(target_listing_id)
     target_reservations = []
     seen_ids = set()
-    page_responses = []
 
-    def handle_response(response):
-        url = response.url
-        if response.status != 200:
-            return
-        if "api/v2/reservations" in url:
-            try:
-                data = response.json()
-                if isinstance(data, dict) and "reservations" in data:
-                    page_responses.append({
-                        "url": url,
-                        "reservations": data["reservations"],
-                    })
-            except Exception:
-                pass
+    def scrape_one_page(tab_url, tab_name):
+        nonlocal target_reservations
+        page_responses = []
 
-    page.on("response", handle_response)
-
-    try:
-        page_url = "https://www.airbnb.com/hosting/reservations/upcoming"
-        print(f"   📄 Page : upcoming (uniquement)...")
-        page_responses.clear()
-        page.goto(page_url, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
-
-        for page_num in range(50):
-            new_in_page = 0
-            for resp in page_responses:
-                for r in resp["reservations"]:
-                    parsed = _parse_reservation_node(r)
-                    rid = parsed.get("id")
-                    if not rid or rid in seen_ids:
-                        continue
-                    seen_ids.add(rid)
-                    if str(parsed.get("listing_id", "")) == target_listing_id_str:
-                        target_reservations.append(parsed)
-                        new_in_page += 1
-            print(f"      Page {page_num+1}: +{new_in_page} (cumul cible: {len(target_reservations)})")
-            page_responses.clear()
-
-            next_btn = None
-            for selector in [
-                'button:has-text("Suivant")', 'button:has-text("Next")',
-                '[aria-label="Suivant"]', '[aria-label="Next"]',
-            ]:
+        def handle_response(response):
+            url = response.url
+            if response.status != 200:
+                return
+            if "api/v2/reservations" in url:
                 try:
-                    btn = page.locator(selector)
-                    if btn.count() > 0 and btn.first.is_visible() and btn.first.is_enabled():
-                        next_btn = btn.first
-                        break
+                    data = response.json()
+                    if isinstance(data, dict) and "reservations" in data:
+                        page_responses.append({
+                            "url": url,
+                            "reservations": data["reservations"],
+                            "total_count": data.get("metadata", {}).get("total_count", 0),
+                        })
                 except Exception:
-                    continue
+                    pass
 
-            if not next_btn:
-                break
-            next_btn.click()
+        page.on("response", handle_response)
+        try:
+            print(f"   📄 Page : {tab_name}...")
+            page_responses.clear()
+            page.goto(tab_url, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(3000)
-    finally:
-        page.remove_listener("response", handle_response)
+
+            for page_num in range(200):
+                new_in_page = 0
+                total = page_responses[-1]["total_count"] if page_responses else 0
+                for resp in page_responses:
+                    for r in resp["reservations"]:
+                        parsed = _parse_reservation_node(r)
+                        rid = parsed.get("id")
+                        if not rid or rid in seen_ids:
+                            continue
+                        seen_ids.add(rid)
+                        if str(parsed.get("listing_id", "")) == target_listing_id_str:
+                            target_reservations.append(parsed)
+                            new_in_page += 1
+                print(f"      Page {page_num+1}: +{new_in_page} (total:{total}, cumul:{len(target_reservations)})")
+                page_responses.clear()
+
+                next_btn = None
+                for selector in [
+                    'button:has-text("Suivant")', 'button:has-text("Next")',
+                    '[aria-label="Suivant"]', '[aria-label="Next"]',
+                ]:
+                    try:
+                        btn = page.locator(selector)
+                        if btn.count() > 0 and btn.first.is_visible() and btn.first.is_enabled():
+                            next_btn = btn.first
+                            break
+                    except Exception:
+                        continue
+
+                if not next_btn:
+                    break
+                next_btn.click()
+                page.wait_for_timeout(3000)
+        finally:
+            page.remove_listener("response", handle_response)
+
+    scrape_one_page("https://www.airbnb.com/hosting/reservations/upcoming", "upcoming")
+
+    if not target_reservations:
+        scrape_one_page("https://www.airbnb.com/hosting/reservations/all", "all")
 
     return target_reservations
 
@@ -537,11 +542,12 @@ def main():
 
         except Exception as e:
             print(f"   ERREUR session: {e}")
-            # Marquer les entrées restantes en erreur
+            # Marquer les entrées restantes en erreur avec leur retry_count réel
             for entry in entries:
                 entry_id = entry["id"]
+                retry = entry.get("retry_count", 0) or 0
                 try:
-                    mark_error(entry_id, f"Session error: {e}")
+                    mark_error(entry_id, f"Session error: {e}", retry)
                 except Exception:
                     pass
 
