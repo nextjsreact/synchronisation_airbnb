@@ -404,9 +404,19 @@ def login(page):
         # Peut-être un lien magique ou une autre méthode
         # Continuer directement à la vérification
     else:
-        # Remplir mot de passe — attendre qu'il apparaisse
+        # Attendre plus longtemps que le contenu charge après CAPTCHA (React SPA)
         password_filled = False
-        for attempt in range(3):
+        for attempt in range(5):
+            page.wait_for_timeout(3000)
+            current_url = page.url
+            current_content = page.inner_text("body").lower()
+
+            # Vérifier si on est déjà redirigé
+            if "login" not in current_url and "signin" not in current_url:
+                print("   ✅ Redirection détectée après CAPTCHA !")
+                break
+
+            # Chercher le champ mot de passe
             for selector in ['input[type="password"]', 'input[name="password"]', 'input[autocomplete="current-password"]']:
                 try:
                     field = page.locator(selector).first
@@ -419,7 +429,41 @@ def login(page):
                     continue
             if password_filled:
                 break
-            page.wait_for_timeout(2000)
+
+            # Détecter magic link / code OTP
+            if any(kw in current_content for kw in [
+                "vérifiez votre email", "check your email", "lien magique",
+                "magic link", "we sent a link", "nous avons envoyé",
+                "enter the code", "entrez le code", "code de vérification",
+                "verification code", "otp",
+            ]):
+                print("\n   📧 Flow magic link / code OTP détecté")
+                print("   ➤ Vérifiez votre boîte mail et cliquez sur le lien ou entrez le code")
+                print("   ➤ Le script attendra la connexion (max 4 min)...")
+
+                for _ in range(120):
+                    time.sleep(2)
+                    cur = page.url
+                    if "login" not in cur and "signin" not in cur:
+                        print("   ✅ Connexion détectée !")
+                        password_filled = True  # Marquer comme ok pour skip l'erreur
+                        break
+                break
+
+            # Dump debug à chaque tentative
+            all_inputs = page.locator("input:visible").all()
+            print(f"   ⏳ Tentative {attempt+1}/5 — {len(all_inputs)} input(s) visible(s)")
+            for inp in all_inputs:
+                try:
+                    attrs = {
+                        "type": inp.get_attribute("type"),
+                        "name": inp.get_attribute("name"),
+                        "id": inp.get_attribute("id"),
+                        "placeholder": inp.get_attribute("placeholder"),
+                    }
+                    print(f"      - {attrs}")
+                except Exception:
+                    pass
         
         if not password_filled:
             # Sauvegarder la page pour debug
@@ -428,24 +472,7 @@ def login(page):
             with open(debug_path, "w", encoding="utf-8") as f:
                 f.write(page.content())
             print(f"   🔍 Page sauvegardée : {debug_path}")
-            
-            # Vérifier si c'est un lien magique
-            page_text = page.inner_text("body").lower()
-            if any(kw in page_text for kw in ["email", "lien", "link", "check your", "vérifiez"]):
-                print("\n   📧 Airbnb semble utiliser un lien magique par email")
-                print("   ➤ Vérifiez votre boîte mail et cliquez sur le lien")
-                print("   ➤ Le script attendra que vous soyez connecté...")
-                
-                # Attendre que l'utilisateur clique sur le lien
-                for _ in range(120):  # 4 minutes
-                    time.sleep(2)
-                    if "login" not in page.url and "signin" not in page.url:
-                        print("   ✅ Connexion détectée via lien email !")
-                        break
-                else:
-                    raise RuntimeError("Timeout — lien email non cliqué dans les 4 minutes")
-            else:
-                raise RuntimeError(f"Champ mot de passe introuvable — voir {debug_path}")
+            raise RuntimeError(f"Champ mot de passe introuvable — voir {debug_path}")
 
     # Détecter 2FA ou CAPTCHA
     current_url  = page.url
