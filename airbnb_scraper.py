@@ -398,6 +398,15 @@ def login(page):
         current_url = page.url
         page_content = page.inner_text("body").lower()
         print(f"   🔍 URL après CAPTCHA : {current_url}")
+        
+        # Sauvegarder la session IMMÉDIATEMENT après CAPTCHA résolu
+        # pour préserver les cookies Arkose Labs et éviter le CAPTCHA au prochain cycle
+        try:
+            os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
+            page.context.storage_state(path=SESSION_FILE)
+            print(f"   💾 Session sauvegardée post-CAPTCHA : {SESSION_FILE}")
+        except Exception as e:
+            print(f"   ⚠️  Échec sauvegarde post-CAPTCHA : {e}")
     
     if "login" not in current_url and "signin" not in current_url:
         print("   ℹ️  Déjà redirigé après email, pas besoin de mot de passe")

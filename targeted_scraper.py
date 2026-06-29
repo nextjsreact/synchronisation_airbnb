@@ -531,8 +531,19 @@ def main():
                 else:
                     print("   ⚠️  Session expirée — reconnexion...")
                     login(page)
+                    # Sauvegarder la session après login réussi
+                    try:
+                        page.context.storage_state(path=SESSION_FILE)
+                        print(f"   💾 Session sauvegardée après reconnexion")
+                    except Exception as e:
+                        print(f"   ⚠️  Échec sauvegarde session : {e}")
             else:
                 login(page)
+                try:
+                    page.context.storage_state(path=SESSION_FILE)
+                    print(f"   💾 Session sauvegardée après login")
+                except Exception as e:
+                    print(f"   ⚠️  Échec sauvegarde session : {e}")
 
             # Traiter chaque entrée
             for entry in entries:
