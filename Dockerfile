@@ -76,6 +76,7 @@ COPY currency_converter.py .
 COPY collect_ical_urls.py .
 COPY ical_watcher.py .
 COPY targeted_scraper.py .
+COPY periodic_scraper.py .
 COPY monitoring_watcher.py .
 COPY .env .
 

@@ -27,6 +27,21 @@ services:
     restart: unless-stopped
     command: python targeted_scraper.py
 
+  # Periodic scraper (toutes les 6h — détecte modifs guest_count/montant + annulations)
+  periodic-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: periodic-scraper
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+    shm_size: "2gb"
+    mem_limit: "4g"
+    restart: unless-stopped
+    command: python periodic_scraper.py
+
   # Monitoring watcher (alertes 24h sans nouvelle reservation)
   monitoring-watcher:
     build:
