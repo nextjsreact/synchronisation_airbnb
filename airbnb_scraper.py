@@ -991,7 +991,12 @@ def get_reservations(page):
     offset = 0
     limit  = 40
 
-    page.goto("https://www.airbnb.com/hosting")
+    try:
+        page.goto("https://www.airbnb.com/hosting", wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        print("   ⏱️  Airbnb lent, fallback DOM immédiat")
+        return []
+
     page.wait_for_timeout(3000)
 
     while True:
