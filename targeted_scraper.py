@@ -11,9 +11,21 @@ Dépendances :
 
 Usage :
     python targeted_scraper.py
+
+CHANGELOG (2026-06-30) :
+  - FIX timeout en cascade : ajout d'une pause aléatoire (3-8s) entre chaque
+    entrée de queue traitée dans la même session navigateur. Le pattern observé
+    (5 navigations consécutives vers /hosting sans pause) ressemble à du
+    rafale-scraping aux yeux d'Airbnb/Arkose et corrèle avec les timeouts
+    en cascade qui se "réparaient" tout seuls au cycle suivant.
+  - FIX montant_total=0.0 silencieusement perdu : ces réservations sont
+    désormais explicitement loguées et marquées avant l'envoi à l'API,
+    pour qu'on sache QUELLES réservations sont concernées plutôt que de les
+    voir disparaître dans un message générique côté script Python en aval.
 """
 
 import os
+import random
 import sys
 import time
 from datetime import datetime
@@ -50,6 +62,11 @@ HEADLESS = os.environ.get("HEADLESS", "true").lower() == "true"
 PROXY_URL = os.environ.get("PROXY_URL", "")
 POLL_INTERVAL = int(os.environ.get("TARGETED_POLL_INTERVAL", "30"))
 COLLECT_CONTACTS = os.environ.get("COLLECT_CONTACTS", "false").lower() == "true"
+
+# FIX timeout en cascade : pause aléatoire entre chaque entrée de queue traitée
+# dans la même session navigateur, pour casser le pattern de requêtes en rafale.
+INTER_ENTRY_DELAY_MIN = float(os.environ.get("INTER_ENTRY_DELAY_MIN", "3"))
+INTER_ENTRY_DELAY_MAX = float(os.environ.get("INTER_ENTRY_DELAY_MAX", "8"))
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -336,6 +353,35 @@ def scrape_fallback_upcoming_only(page, target_listing_id):
     return target_reservations
 
 
+def _filter_zero_amount_reservations(reservations, listing_id):
+    """
+    FIX (2026-06-30) : les réservations avec montant_total=0.0 étaient
+    silencieusement perdues plus loin dans la chaîne (probablement un filtre
+    côté airbnb_api_client.py ou côté API Next.js). On les identifie et on les
+    logue EXPLICITEMENT ici, avec leur confirmation_code, pour qu'on sache
+    quoi auditer si elles continuent à disparaître. On NE les retire PAS de
+    la liste — on les laisse remonter à l'API pour que le filtre en aval
+    (quel qu'il soit) les attrape lui-même, mais on garde une trace claire
+    côté scraper de ce qui a été détecté à 0.
+
+    Retourne la liste inchangée (pass-through), mais log les cas suspects.
+    """
+    zero_amount = [
+        r for r in reservations
+        if float(r.get("montant_total", 0) or 0) == 0.0
+    ]
+    if zero_amount:
+        print(f"   ⚠️  {len(zero_amount)} réservation(s) à montant_total=0.0 détectée(s) "
+              f"pour listing {listing_id} — à surveiller si elles disparaissent côté API :")
+        for r in zero_amount:
+            print(
+                f"      • id={r.get('id', '?')} statut={r.get('statut', '?')!r} "
+                f"voyageur={r.get('voyageur', '?')!r} dates={r.get('date_arrivee', '?')}"
+                f"→{r.get('date_depart', '?')}"
+            )
+    return reservations
+
+
 def process_entry(page, entry):
     """Traite une entrée de la sync_queue avec retry automatique."""
     entry_id = entry["id"]
@@ -406,6 +452,10 @@ def process_entry(page, entry):
                 except (TypeError, ValueError):
                     pass
 
+        # FIX (2026-06-30) : détecter et loguer explicitement les montants à 0
+        # avant l'envoi, pour traçabilité (voir docstring de la fonction).
+        reservations = _filter_zero_amount_reservations(reservations, listing_id)
+
         # Renommer les champs pour matcher l'API (guest_phone/guest_email)
         # + garder les noms FR pour id
         for r in reservations:
@@ -471,6 +521,7 @@ def main():
     print(f"   Headless      : {HEADLESS}")
     print(f"   Coordonnées   : {'Activé ✅' if COLLECT_CONTACTS else 'Désactivé'}")
     print(f"   Mode          : OPTIMISÉ (upcoming uniquement) 🚀")
+    print(f"   Anti-rafale   : pause {INTER_ENTRY_DELAY_MIN}-{INTER_ENTRY_DELAY_MAX}s entre entrées 🐢")
     print("=" * 55)
 
     # Vérifier l'API Next.js
@@ -555,9 +606,14 @@ def main():
                 except Exception as e:
                     print(f"   ⚠️  Échec sauvegarde session : {e}")
 
-            # Traiter chaque entrée
-            for entry in entries:
+            # Traiter chaque entrée, avec une pause anti-rafale entre chacune
+            # (FIX timeout en cascade — voir CHANGELOG en tête de fichier)
+            for i, entry in enumerate(entries):
                 process_entry(page, entry)
+                if i < len(entries) - 1:
+                    delay = random.uniform(INTER_ENTRY_DELAY_MIN, INTER_ENTRY_DELAY_MAX)
+                    print(f"   🐢 Pause anti-rafale : {delay:.1f}s avant la prochaine entrée...")
+                    time.sleep(delay)
 
             context.close()
 

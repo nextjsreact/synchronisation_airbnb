@@ -1,9 +1,9 @@
 """
 airbnb_scraper.py — Scrape complet Airbnb
 ==========================================
-Version  : 2.0.0
+Version  : 2.0.1
 Auteur   : Karim TIGUI
-Date     : Mai 2026
+Date     : Mai 2026 (patché Juin 2026)
 
 Changements v2 vs v1 :
   + Pousse les réservations vers Supabase (upsert)
@@ -11,6 +11,15 @@ Changements v2 vs v1 :
   + Peuple la table listings pour le iCal Watcher
   + Log de synchronisation dans sync_logs
   + Garde l'export CSV + JSON local en parallèle
+
+CHANGELOG v2.0.1 (2026-06-30) :
+  + FIX timeout en cascade : le goto("https://www.airbnb.com/hosting") dans
+    get_reservations() avait un timeout de 30000ms, plus court que les autres
+    navigations du fichier (60000ms pour /hosting/reservations/upcoming,
+    /hosting/stay/...). Aligné à 60000ms pour absorber les ralentissements
+    légitimes côté Airbnb sans déclencher de retry coûteux côté
+    targeted_scraper.py (qui relance tout le cycle GraphQL+fallback à chaque
+    tentative).
 
 Dépendances :
     pip install cloakbrowser pyotp requests pandas
@@ -81,6 +90,9 @@ OUTPUT_JSON = os.environ.get("OUTPUT_JSON",     "output/reservations_airbnb.json
 HEADLESS    = os.environ.get("HEADLESS", "false").lower() == "true"
 PROXY_URL   = os.environ.get("PROXY_URL", "")  # ex: http://user:pass@residential-proxy:port
 COLLECT_CONTACTS = os.environ.get("COLLECT_CONTACTS", "false").lower() == "true"  # Collecter les coordonnées
+# FIX (2026-06-30) : timeout du goto principal de get_reservations(), aligné
+# avec les autres navigations du fichier (60s au lieu de 30s).
+HOSTING_GOTO_TIMEOUT_MS = int(os.environ.get("HOSTING_GOTO_TIMEOUT_MS", "60000"))
 # ============================================================
 
 
@@ -992,7 +1004,11 @@ def get_reservations(page):
     limit  = 40
 
     try:
-        page.goto("https://www.airbnb.com/hosting", wait_until="domcontentloaded", timeout=30000)
+        # FIX (2026-06-30) : timeout aligné à 60s (au lieu de 30s) pour absorber
+        # les ralentissements légitimes côté Airbnb sans déclencher un retry
+        # complet côté targeted_scraper.py (qui relance tout le cycle
+        # GraphQL+fallback à chaque tentative — coûteux et auto-aggravant).
+        page.goto("https://www.airbnb.com/hosting", wait_until="domcontentloaded", timeout=HOSTING_GOTO_TIMEOUT_MS)
     except Exception:
         print("   ⏱️  Airbnb lent, fallback DOM immédiat")
         return []
@@ -1218,7 +1234,7 @@ def main():
     start_time = time.time()
 
     print("=" * 55)
-    print("   Airbnb Scraper — v2.0.0")
+    print("   Airbnb Scraper — v2.0.1")
     print(f"   Démarré le : {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     print(f"   Moteur     : {'CloakBrowser (stealth) ✅' if USE_CLOAKBROWSER else 'Playwright standard ⚠️'}")
     print(f"   Headless   : {'Oui' if HEADLESS else 'Non'}")

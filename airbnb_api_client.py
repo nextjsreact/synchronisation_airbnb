@@ -1,11 +1,25 @@
 """
 airbnb_api_client.py - Client pour envoyer les données à l'API Next.js
 =======================================================================
-Version  : 2.0.1
-Date     : Mai 2026
+Version  : 2.0.2
+Date     : Mai 2026 (patché Juin 2026)
 
 Ce module remplace l'accès direct à Supabase par des appels à l'API Next.js.
 À intégrer dans airbnb_scraper.py à la place de supabase_client.py
+
+CHANGELOG v2.0.2 (2026-06-30) :
+  + FIX bug "montant_total=0.0 → reservation ignorée" : la vérification des
+    champs requis traitait `0` comme une valeur manquante au même titre que
+    `None` ou `""` (via `r_copy[req] in (None, "", 0)`). Or montant_total=0
+    est une valeur LÉGITIME (résa annulée, séjour gratuit, montant pas
+    encore affiché par Airbnb) et non une absence de données. Ces
+    réservations étaient donc silencieusement rejetées AVANT même d'être
+    envoyées à l'API Next.js — elles n'apparaissaient ni dans les logs
+    Supabase, ni dans les erreurs Zod, ni dans le service de sync.
+    Correctif : séparation des champs requis "non-numériques" (où une
+    chaîne vide ou None signale une vraie absence) des champs "numériques"
+    (où 0 est une valeur valide, seule l'absence de clé ou None compte
+    comme manquant).
 
 Dépendances :
     pip install requests python-dotenv
@@ -44,6 +58,22 @@ API_KEY = os.environ.get("NEXTJS_API_KEY", "")
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # secondes
 TIMEOUT = 120  # secondes (par batch)
+
+# ── FIX (2026-06-30) ─────────────────────────────────────────────────────
+# Champs requis dont une valeur "vide" (None, "", absente) signale une vraie
+# anomalie de scraping. Pour ceux-ci on garde la vérification stricte.
+REQUIRED_FR_FIELDS_NON_NUMERIC = (
+    "id", "listing_id", "statut", "voyageur",
+    "date_arrivee", "date_depart", "devise",
+)
+# Champs requis NUMÉRIQUES où 0 est une valeur légitime (montant nul,
+# annulation, etc.) — seule l'absence de clé ou une valeur None est
+# considérée comme manquante. nb_voyageurs et nb_nuits restent à >0 car
+# une réservation a forcément au moins 1 voyageur et 1 nuit ; montant_total
+# en revanche peut légitimement valoir 0.
+REQUIRED_FR_FIELDS_NUMERIC_ALLOW_ZERO = ("montant_total",)
+REQUIRED_FR_FIELDS_NUMERIC_STRICT = ("nb_voyageurs", "nb_nuits")
+# ─────────────────────────────────────────────────────────────────────────
 
 
 # ============================================================================
@@ -85,7 +115,7 @@ def check_api_health() -> dict:
 def send_to_nextjs_api(
     reservations: List[Dict[str, Any]], 
     sync_type: str = "full",
-    script_version: str = "2.0.1"
+    script_version: str = "2.0.2"
 ) -> Dict[str, Any]:
     """
     Envoie les réservations à l'API Next.js avec retry automatique.
@@ -130,13 +160,16 @@ def send_to_nextjs_api(
     total_skipped = 0
     total_conflicts = 0
     total_errors = []
+    total_dropped_locally = 0  # FIX: compteur des résa droppées AVANT envoi (visibilité)
 
     for batch_idx, batch in enumerate(batches, 1):
         # L'API attend les noms de champs FRANÇAIS (voyageur, date_arrivee, etc.)
         # cf. ReservationSchema dans app/api/airbnb/sync/route.ts
         sanitized_batch = []
-        # Champs requis par le Zod schema
-        required_fr_fields = (
+        # Champs requis par le Zod schema (utilisé seulement pour info/debug
+        # ci-dessous ; la vérification réelle se fait via les 3 listes dédiées
+        # ci-dessus pour distinguer champs numériques vs non-numériques)
+        required_fr_fields_all = (
             "id", "listing_id", "statut", "voyageur", "nb_voyageurs",
             "date_arrivee", "date_depart", "nb_nuits", "montant_total", "devise",
         )
@@ -181,19 +214,58 @@ def send_to_nextjs_api(
                         r_copy[nf] = int(v) if nf in ("nb_voyageurs", "nb_nuits") else v
                     except (TypeError, ValueError):
                         r_copy[nf] = 0
-                elif nf in required_fr_fields and r_copy.get(nf) is None:
+                elif nf in required_fr_fields_all and r_copy.get(nf) is None:
                     r_copy[nf] = 0
             # Champs optionnels null → retirer
             for field in ("base_price", "cleaning_fee", "service_fee", "taxes",
                           "guest_email", "guest_phone", "guest_nationality", "special_requests"):
                 if field in r_copy and r_copy[field] is None:
                     del r_copy[field]
-            # Vérifier champs requis
-            for req in required_fr_fields:
-                if req not in r_copy or r_copy[req] in (None, "", 0):
-                    print(f"   ⚠️  Champ FR requis manquant: {req}={r_copy.get(req)} → reservation ignorée")
-                    r_copy = None
+
+            # ── Vérifier champs requis (FIX 2026-06-30) ──────────────────
+            # On distingue désormais 3 catégories pour éviter de traiter
+            # une valeur 0 légitime comme une absence de donnée :
+            #   1. Champs non-numériques : None/""/absent = vraiment manquant
+            #   2. Champs numériques stricts (nb_voyageurs, nb_nuits) :
+            #      0 ou absent = vraiment manquant (une résa a toujours
+            #      au moins 1 voyageur et 1 nuit)
+            #   3. Champs numériques permissifs (montant_total) :
+            #      seule l'ABSENCE de clé ou une valeur None compte comme
+            #      manquante ; 0 est une valeur valide et conservée.
+            rejection_reason = None
+
+            for req in REQUIRED_FR_FIELDS_NON_NUMERIC:
+                if req not in r_copy or r_copy[req] in (None, ""):
+                    rejection_reason = f"{req}={r_copy.get(req)!r}"
                     break
+
+            if rejection_reason is None:
+                for req in REQUIRED_FR_FIELDS_NUMERIC_STRICT:
+                    if req not in r_copy or r_copy[req] in (None, 0):
+                        rejection_reason = f"{req}={r_copy.get(req)!r}"
+                        break
+
+            if rejection_reason is None:
+                for req in REQUIRED_FR_FIELDS_NUMERIC_ALLOW_ZERO:
+                    if req not in r_copy or r_copy[req] is None:
+                        rejection_reason = f"{req}={r_copy.get(req)!r} (clé absente ou None)"
+                        break
+
+            if rejection_reason is not None:
+                print(
+                    f"   ⚠️  Champ FR requis manquant: {rejection_reason} "
+                    f"(id={r_copy.get('id', '?')}) → reservation ignorée"
+                )
+                total_dropped_locally += 1
+                r_copy = None
+            elif r_copy.get("montant_total") == 0:
+                # Pas une erreur — juste une trace explicite pour audit,
+                # puisque c'est précisément le cas qui disparaissait avant.
+                print(
+                    f"   ℹ️  montant_total=0.0 conservé et envoyé "
+                    f"(id={r_copy.get('id', '?')}, statut={r_copy.get('statut', '?')!r})"
+                )
+
             if r_copy is not None:
                 sanitized_batch.append(r_copy)
 
@@ -205,6 +277,10 @@ def send_to_nextjs_api(
                 "script_version": script_version
             }
         }
+
+        if not sanitized_batch:
+            print(f"   ⚠️  Batch {batch_idx}/{len(batches)} entièrement vide après filtrage local — skip envoi")
+            continue
 
         last_error = None
         for attempt in range(1, MAX_RETRIES + 1):
@@ -301,6 +377,7 @@ def send_to_nextjs_api(
             "skipped": total_skipped,
             "failed": len(total_errors),
             "conflicts": total_conflicts,
+            "dropped_locally": total_dropped_locally,  # FIX: visibilité sur le filtrage Python
         },
         "errors": total_errors
     }
@@ -324,6 +401,9 @@ def _print_success(result: Dict[str, Any]):
     print(f"      • Ignorées:  {metrics.get('skipped', 0)}")
     print(f"      • Échouées:  {metrics.get('failed', 0)}")
     print(f"      • Conflits:  {metrics.get('conflicts', 0)}")
+    dropped = metrics.get('dropped_locally', 0)
+    if dropped:
+        print(f"      • Rejetées localement (avant envoi): {dropped}")
     
     if errors:
         print(f"\n   ⚠️  Erreurs ({len(errors)}):")
@@ -507,9 +587,26 @@ if __name__ == "__main__":
         "guest_nationality": "FR",
         "special_requests": "Test de l'API client Python"
     }
+
+    test_reservation_zero_amount = {
+        "id": "PYTEST002",
+        "listing_id": "12345678",
+        "statut": "Annulee",
+        "voyageur": "Test User Zero",
+        "nb_voyageurs": 1,
+        "date_arrivee": "2026-07-01",
+        "date_depart": "2026-07-02",
+        "nb_nuits": 1,
+        "montant_total": 0.0,  # FIX (2026-06-30) : doit maintenant être envoyé, pas ignoré
+        "devise": "DZD",
+    }
     
     try:
-        result = send_to_nextjs_api([test_reservation], sync_type="manual")
+        result = send_to_nextjs_api(
+            [test_reservation, test_reservation_zero_amount],
+            sync_type="manual"
+        )
         print(f"\n✅ Test réussi!")
     except Exception as e:
         print(f"\n❌ Test échoué: {e}")
+        
